@@ -1174,14 +1174,41 @@ export function renderParagraphFragment(
     // - Marker starts at (indentLeft - hanging)
     // - Text starts at indentLeft
     // - The marker box fills the hanging space
-    if (isFirstLine && block.attrs?.listMarker) {
+    if (isFirstLine && block.attrs?.listMarker && !block.attrs?.listMarkerHidden) {
       // Override padding for list first lines
       // Marker position = indentLeft - hanging (where first line content starts)
       const markerPos = Math.max(0, indentLeft - (indent?.hanging ?? 0));
       lineEl.style.paddingLeft = `${markerPos}px`;
       lineEl.style.textIndent = '0'; // Don't use textIndent for lists
 
-      const marker = renderListMarker(block.attrs.listMarker, indent, doc);
+      // Resolve marker font per ECMA-376 §17.9.6:
+      // 1. Numbering level rPr (explicit marker font)
+      // 2. First text run's font (paragraph content)
+      // 3. Paragraph default font (from style)
+      let firstTextRun: TextRun | undefined;
+      if (!block.attrs.listMarkerFontFamily || !block.attrs.listMarkerFontSize) {
+        for (let ri = line.fromRun; ri <= line.toRun; ri++) {
+          const r = block.runs[ri];
+          if (r && r.kind === 'text') {
+            firstTextRun = r;
+            break;
+          }
+        }
+      }
+      const markerFontFamily =
+        block.attrs.listMarkerFontFamily ??
+        firstTextRun?.fontFamily ??
+        block.attrs.defaultFontFamily;
+      const markerFontSize =
+        block.attrs.listMarkerFontSize ?? firstTextRun?.fontSize ?? block.attrs.defaultFontSize;
+
+      const marker = renderListMarker(
+        block.attrs.listMarker,
+        indent,
+        doc,
+        markerFontFamily,
+        markerFontSize
+      );
       lineEl.insertBefore(marker, lineEl.firstChild);
     }
 
@@ -1202,11 +1229,25 @@ export function renderParagraphFragment(
 function renderListMarker(
   marker: string,
   indent: ParagraphIndent | undefined,
-  doc: Document
+  doc: Document,
+  fontFamily?: string,
+  fontSize?: number
 ): HTMLElement {
   const span = doc.createElement('span');
   span.className = 'layout-list-marker';
   span.style.display = 'inline-block';
+
+  // Apply font styling so the marker matches the paragraph text
+  // Per ECMA-376 §17.9.6, marker formatting comes from level rPr,
+  // then paragraph defaults, then document defaults.
+  if (fontFamily) {
+    span.style.fontFamily = resolveFontFamily(fontFamily).cssFallback;
+  }
+  if (fontSize) {
+    // Convert points to pixels: 1pt = 96/72 px
+    const fontSizePx = (fontSize * 96) / 72;
+    span.style.fontSize = `${fontSizePx}px`;
+  }
 
   // In Word, the marker character is followed by a tab that extends to the
   // text indent position. We emulate this by left-aligning the marker within
